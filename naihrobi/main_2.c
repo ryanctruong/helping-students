@@ -2,7 +2,8 @@
 
  ***************************************************************/
 
-#include "general.h"
+#include "naihrobi/general_1.h"
+
 
 int main(void)
 {
