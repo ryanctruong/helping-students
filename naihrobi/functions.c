@@ -7,104 +7,106 @@
 /***************************************************************
  child 1
 ***************************************************************/
-int child1(int in, int out)
-{
-  int  len;
-  char buf[16384];
-  char *token;
-  
-  while ((len=myGetline(in, buf)) > 0)//read a line from the input FD
-    {
-      if(buf[0]=='\n')
-	continue;
-      replaceNewline(buf);//get rid of '\n' since we don't want it to show up in a string
-      
-      token=strtok(buf, " "); //get the first token
-      write(out, token, strlen(token));//send this first token to the next child
-      write(out, "\n", 1);//and send a '\n' so myGetline will work right
-      
-      while((token=strtok(0, " "))){//keep getting tokens from the input string
-	write(out, token, strlen(token));//send this first token to the next child
-	write(out, "\n", 1);//and send a '\n' so myGetline will work right
-      }
+void* child1(void* args) {
+    pipe_args* pargs = (pipe_args*)args;
+    int in = pargs->in;
+    int out = pargs->out;
+    int len;
+    char buf[16384];
+    char *token;
+
+    while ((len = myGetline(in, buf)) > 0) { // read a line from the input FD
+        if (buf[0] == '\n')
+            continue;
+        replaceNewline(buf); // get rid of '\n' since we don't want it to show up in a string
+
+        token = strtok(buf, " "); // get the first token
+        write(out, token, strlen(token)); // send this first token to the next child
+        write(out, "\n", 1); // and send a '\n' so myGetline will work right
+
+        while ((token = strtok(NULL, " "))) { // keep getting tokens from the input string
+            write(out, token, strlen(token)); // send this first token to the next child
+            write(out, "\n", 1); // and send a '\n' so myGetline will work right
+        }
     }
-  close(out);//if we don't close, child 2 will never see EOF
+    close(out); // if we don't close, child 2 will never see EOF
   exit(0);
 }
 
 /***************************************************************
  child 2
 ***************************************************************/
-int child2(int in, int out)
-{
-  int  len;
-  char token[80];
-  
-  int fd;
-  
-  fd = open("left.out", O_WRONLY | O_CREAT | O_TRUNC, S_IREAD | S_IWRITE);//prepare the output file
-  
-  if(!fd)
-    {
-      printf("Error opening file 'left.out'\n\n");
-      exit(100);
-    }  
-  
-  while ((len=myGetline(in, token)) > 0)//tokens will be coming one at a time in child 2
-    {
-      replaceNewline(token);
-      
-      if(isAllLeft(token))
-	{
-	  write(fd, token, strlen(token));//write to "allLeft" output file
-	  write(fd, "\n", 1);
-	}
-      else
-	{	  
-	  write(out, token, strlen(token));//send to child 3
-	  write(out, "\n", 1);
-	}     
+void* child2(void* args) {
+    pipe_args* pargs = (pipe_args*)args;
+    int in = pargs->in;
+    int out = pargs->out;
+    int len;
+    char token[80];
+    int fd;
+
+    fd = open("left.out", O_WRONLY | O_CREAT | O_TRUNC, S_IREAD | S_IWRITE); // prepare the output file
+
+    if (fd == -1) {
+        printf("Error opening file 'left.out'\n\n");
+        pthread_exit((void*)100); // Use appropriate error handling
     }
-  close(in);//close all file descriptors
-  close(out);
-  close(fd);
+
+    char *saveptr; // For strtok_r()
+
+    while ((len = myGetline(in, token)) > 0) { // tokens will be coming one at a time in child 2
+        replaceNewline(token);
+
+        if (isAllLeft(token)) {
+            write(fd, token, strlen(token)); // write to "allLeft" output file
+            write(fd, "\n", 1);
+        } else {
+            write(out, token, strlen(token)); // send to child 3
+            write(out, "\n", 1);
+        }
+    }
+    close(in); // close all file descriptors
+    close(out);
+    close(fd);
   exit(0);
 }
 
 /***************************************************************
  child 3
 ***************************************************************/
-int child3(int in, int out)
-{
-  int len;
-  char token[80];
-  int fd;
+void* child3(void* args) {
+    pipe_args* pargs = (pipe_args*)args;
+    int in = pargs->in;
+    int out = pargs->out;
+    int len;
+    char token[80];
+    int fd;
   
-  fd = open("right.out", O_WRONLY | O_CREAT | O_TRUNC, S_IREAD | S_IWRITE);//set up other output file
+    fd = open("right.out", O_WRONLY | O_CREAT | O_TRUNC, S_IREAD | S_IWRITE); // set up other output file
   
-  if(!fd)
-    {
-      printf("Error opening file 'right.out'\n\n");
-      exit(100);
+    if (fd == -1) {
+        printf("Error opening file 'right.out'\n\n");
+        pthread_exit((void*)100); // Use an appropriate error code
     }
   
-  while ((len=myGetline(in, token)) > 0)//tokens are coming one at a time in child 3 also
-    {   
-      replaceNewline(token);
+    char *saveptr; // for strtok_r()
+
+    while ((len = myGetline(in, token)) > 0) { // tokens are coming one at a time in child 3 also
+        replaceNewline(token);
       
-      if(isAllRight(token))
-	{
-	  write(fd, token, strlen(token));/*write to output file*/
-	  write(fd, "\n", 1);
-	}
-      else
-	{	 
-	  write(out, token, strlen(token));/*write to standard output*/
-	  write(out, "\n", 1);
-	}                      
+        if (isAllRight(token)) {
+            write(fd, token, strlen(token)); // write to output file
+            write(fd, "\n", 1);
+        } else {
+            if (out != STDOUT_FILENO) { // If 'out' is not standard output
+                write(out, token, strlen(token)); // write to the next stage (if any)
+                write(out, "\n", 1);
+            } else {
+                printf("%s\n", token); // Or print to standard output
+            }
+        }                      
     }
-  close(in);//close all FDs
-  close(fd);
+    close(in); // close all FDs
+    close(fd);
   exit(0);  
 }
 
